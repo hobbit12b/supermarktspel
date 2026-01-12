@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Boodschappen doen, dobbel en breng naar huis</title>
+  <style>
+    :root {
+      --board-max: 980px;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #f5f5f5;
+      color: #111;
+    }
+    .wrap {
+      display: grid;
+      gap: 14px;
+      padding: 14px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .uitleg {
+      width: 100%;
+      max-width: var(--board-max);
+      justify-self: center;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+      box-shadow: 0 10px 24px rgba(0,0,0,.10);
+    }
+    .uitleg img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .play-area {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      justify-items: center;
+    }
+    .hud {
+      width: 100%;
+      max-width: var(--board-max);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .status {
+      background: #fff;
+      padding: 12px 14px;
+      border-radius: 12px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.08);
+      line-height: 1.35;
+    }
+    .status .big {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .status .small {
+      opacity: .85;
+      font-size: 14px;
+    }
+    .dice {
+      width: 92px;
+      height: 92px;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 10px 24px rgba(0,0,0,.10);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+      position: relative;
+      border: 2px solid rgba(0,0,0,.08);
+    }
+    .dice[aria-disabled="true"] {
+      opacity: .55;
+      cursor: default;
+    }
+    .dice .face {
+      width: 64px;
+      height: 64px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .pip {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #111;
+      align-self: center;
+      justify-self: center;
+      opacity: 0;
+    }
+    .dice.rolling {
+      animation: wiggle .6s ease-in-out;
+    }
+    @keyframes wiggle {
+      0% { transform: rotate(0deg) scale(1); }
+      15% { transform: rotate(-8deg) scale(1.02); }
+      35% { transform: rotate(10deg) scale(1.03); }
+      55% { transform: rotate(-6deg) scale(1.02); }
+      75% { transform: rotate(6deg) scale(1.01); }
+      100% { transform: rotate(0deg) scale(1); }
+    }
+
+    .board {
+      width: 100%;
+      max-width: var(--board-max);
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 16px 34px rgba(0,0,0,.12);
+      overflow: hidden;
+      position: relative;
+    }
+    .board img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .spot {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .spot::after {
+      content: "";
+      display: block;
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 3px solid rgba(0,0,0,0);
+      box-sizing: border-box;
+      transition: border-color .15s ease, transform .15s ease;
+      transform: scale(.92);
+    }
+    .spot.valid::after {
+      border-color: rgba(28, 135, 255, .85);
+      transform: scale(1);
+    }
+    .spot.end::after {
+      border-color: rgba(0,0,0,0);
+    }
+
+    .pawn {
+      position: absolute;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 30%, #ff7b7b, #d70000);
+      box-shadow: 0 8px 16px rgba(0,0,0,.22);
+      transform: translate(-50%, -50%);
+      cursor: grab;
+      pointer-events: auto;
+      touch-action: none;
+      border: 2px solid rgba(255,255,255,.7);
+    }
+    .pawn:active {
+      cursor: grabbing;
+    }
+
+    .products {
+      position: absolute;
+      left: 16px;
+      bottom: 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      pointer-events: auto;
+    }
+    .product {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 10px 20px rgba(0,0,0,.12);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid rgba(0,0,0,.08);
+      opacity: .95;
+    }
+    .product img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+
+    .home-slot {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 70px;
+      height: 70px;
+      border-radius: 12px;
+      pointer-events: none;
+      display: grid;
+      place-items: center;
+    }
+    .home-slot img {
+      width: 62px;
+      height: 62px;
+      object-fit: contain;
+      filter: drop-shadow(0 8px 16px rgba(0,0,0,.22));
+    }
+
+    .cta {
+      margin-top: 8px;
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .btn {
+      border: 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #111;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn[disabled] {
+      opacity: .55;
+      cursor: default;
+    }
+    .hint {
+      font-size: 13px;
+      opacity: .8;
+    }
+
+    @media (min-width: 980px) {
+      .play-area {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="uitleg" aria-label="Speluitleg">
+      <img src="uitleg_supermarktspel.jpg" alt="Speluitleg Boodschappen doen" />
+    </div>
+
+    <div class="play-area">
+      <div class="hud">
+        <div class="status" id="status">
+          <div class="big">Klik op de dobbelsteen om te gooien</div>
+          <div class="small" id="substatus">Daarna sleep je de pion naar voren, maximaal zoveel stapjes als je gooide.</div>
+          <div class="cta">
+            <button class="btn" id="unpackBtn" disabled>Uitpakken bij thuis</button>
+            <span class="hint" id="hint"></span>
+          </div>
+        </div>
+
+        <div class="dice" id="dice" role="button" aria-label="Dobbelsteen gooien" aria-disabled="false" tabindex="0">
+          <div class="face" id="face">
+            <span class="pip" data-pos="1"></span>
+            <span class="pip" data-pos="2"></span>
+            <span class="pip" data-pos="3"></span>
+            <span class="pip" data-pos="4"></span>
+            <span class="pip" data-pos="5"></span>
+            <span class="pip" data-pos="6"></span>
+            <span class="pip" data-pos="7"></span>
+            <span class="pip" data-pos="8"></span>
+            <span class="pip" data-pos="9"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="board" id="board">
+        <img src="spelbord_supermarkt.jpg" alt="Spelbord supermarkt" />
+        <div class="overlay" id="overlay"></div>
+
+        <div class="products" id="products" aria-label="Boodschappen">
+          <div class="product" data-prod="0" title="Product 1"><img src="producten/1.png" alt="Product 1"/></div>
+          <div class="product" data-prod="1" title="Product 2"><img src="producten/2.png" alt="Product 2"/></div>
+          <div class="product" data-prod="2" title="Product 3"><img src="producten/3.png" alt="Product 3"/></div>
+        </div>
+
+        <div class="pawn" id="pawn" aria-label="Pion"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const GAME = {"imgWidth": 815, "imgHeight": 890, "spots": [{"x": 79, "y": 674}, {"x": 267, "y": 787}, {"x": 337, "y": 803}, {"x": 409, "y": 784}, {"x": 477, "y": 811}, {"x": 554, "y": 809}, {"x": 616, "y": 847}, {"x": 679, "y": 805}, {"x": 735, "y": 753}, {"x": 735, "y": 682}, {"x": 687, "y": 629}, {"x": 617, "y": 593}, {"x": 553, "y": 554}, {"x": 478, "y": 550}, {"x": 406, "y": 560}, {"x": 332, "y": 553}, {"x": 259, "y": 541}, {"x": 190, "y": 515}, {"x": 128, "y": 473}, {"x": 105, "y": 405}, {"x": 146, "y": 345}, {"x": 217, "y": 357}, {"x": 289, "y": 353}, {"x": 356, "y": 380}, {"x": 393, "y": 442}, {"x": 463, "y": 419}, {"x": 535, "y": 419}, {"x": 609, "y": 394}, {"x": 664, "y": 434}, {"x": 734, "y": 428}, {"x": 761, "y": 357}, {"x": 709, "y": 311}, {"x": 641, "y": 283}, {"x": 573, "y": 295}, {"x": 502, "y": 283}, {"x": 440, "y": 249}, {"x": 365, "y": 265}, {"x": 316, "y": 213}, {"x": 244, "y": 199}], "homeSlots": [{"x": 421.0, "y": 95.5, "w": 150, "h": 151}, {"x": 578.0, "y": 96.0, "w": 150, "h": 150}, {"x": 733.5, "y": 95.5, "w": 151, "h": 151}], "startIndex": 0, "endIndex": 38};
+
+const board = document.getElementById('board');
+const overlay = document.getElementById('overlay');
+const pawn = document.getElementById('pawn');
+const dice = document.getElementById('dice');
+const face = document.getElementById('face');
+const status = document.getElementById('status');
+const substatus = document.getElementById('substatus');
+const unpackBtn = document.getElementById('unpackBtn');
+const hint = document.getElementById('hint');
+
+const pips = [...face.querySelectorAll('.pip')];
+
+let currentIndex = GAME.startIndex;
+let remaining = 0;
+let delivered = 0;
+let rolling = false;
+
+const homePlaced = [null, null, null];
+
+function setHint(text) {
+  hint.textContent = text || "";
+}
+
+function setMain(text) {
+  status.querySelector('.big').textContent = text;
+}
+
+function setSub(text) {
+  substatus.textContent = text;
+}
+
+function boardRect() {
+  return board.getBoundingClientRect();
+}
+
+function toPercent(x, y) {
+  return {
+    left: (x / GAME.imgWidth) * 100,
+    top: (y / GAME.imgHeight) * 100,
+  };
+}
+
+function setPawnToIndex(idx) {
+  const s = GAME.spots[idx];
+  const p = toPercent(s.x, s.y);
+  pawn.style.left = p.left + "%";
+  pawn.style.top = p.top + "%";
+}
+
+function renderSpots() {
+  overlay.innerHTML = "";
+  for (let i = 0; i < GAME.spots.length; i++) {
+    const s = GAME.spots[i];
+    const d = document.createElement('div');
+    d.className = 'spot';
+    if (i === GAME.endIndex) d.classList.add('end');
+    const p = toPercent(s.x, s.y);
+    d.style.left = p.left + "%";
+    d.style.top = p.top + "%";
+    d.dataset.index = String(i);
+    overlay.appendChild(d);
+  }
+  // home slots
+  for (let i = 0; i < GAME.homeSlots.length; i++) {
+    const hs = GAME.homeSlots[i];
+    const slot = document.createElement('div');
+    slot.className = 'home-slot';
+    const p = toPercent(hs.x, hs.y);
+    slot.style.left = p.left + "%";
+    slot.style.top = p.top + "%";
+    slot.dataset.slot = String(i);
+    overlay.appendChild(slot);
+  }
+}
+
+function pipLayout(n) {
+  // positions in 3x3 grid: 1..9
+  const layouts = {
+    1: [5],
+    2: [1,9],
+    3: [1,5,9],
+    4: [1,3,7,9],
+    5: [1,3,5,7,9],
+    6: [1,3,4,6,7,9],
+  };
+  const on = new Set(layouts[n] || []);
+  for (let i = 0; i < pips.length; i++) {
+    const pos = Number(pips[i].dataset.pos);
+    pips[i].style.opacity = on.has(pos) ? "1" : "0";
+  }
+}
+
+function setDiceDisabled(disabled) {
+  dice.setAttribute('aria-disabled', disabled ? "true" : "false");
+  if (disabled) {
+    dice.tabIndex = -1;
+  } else {
+    dice.tabIndex = 0;
+  }
+}
+
+function updateValidSpots() {
+  const spots = [...overlay.querySelectorAll('.spot')];
+  spots.forEach(s => s.classList.remove('valid'));
+  if (remaining <= 0) return;
+  const maxIdx = Math.min(GAME.endIndex, currentIndex + remaining);
+  for (let i = currentIndex + 1; i <= maxIdx; i++) {
+    const el = overlay.querySelector(`.spot[data-index="${i}"]`);
+    if (el) el.classList.add('valid');
+  }
+}
+
+function canMoveTo(targetIdx) {
+  if (remaining <= 0) return false;
+  const diff = targetIdx - currentIndex;
+  return diff > 0 && diff <= remaining;
+}
+
+function nearestSpotIndex(clientX, clientY) {
+  const rect = boardRect();
+  const x = (clientX - rect.left) * (GAME.imgWidth / rect.width);
+  const y = (clientY - rect.top) * (GAME.imgHeight / rect.height);
+
+  let best = null;
+  let bestD = 1e9;
+
+  for (let i = 0; i < GAME.spots.length; i++) {
+    const s = GAME.spots[i];
+    const dx = s.x - x;
+    const dy = s.y - y;
+    const d = Math.hypot(dx, dy);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  // drempel: ongeveer binnen de cirkel kunnen droppen
+  return (bestD <= 42) ? best : null;
+}
+
+function updateUI() {
+  unpackBtn.disabled = !(currentIndex === GAME.endIndex && delivered < 3);
+  if (delivered >= 3) {
+    setMain("Klaar, alle producten zijn thuis");
+    setSub("Je kunt opnieuw laden om opnieuw te spelen.");
+    setDiceDisabled(true);
+    setHint("");
+    return;
+  }
+
+  if (currentIndex === GAME.endIndex) {
+    setMain("Je bent thuis");
+    setSub("Klik op Uitpakken, daarna gaat de pion terug naar de start.");
+    setDiceDisabled(true);
+    setHint("");
+    return;
+  }
+
+  if (remaining <= 0) {
+    setMain("Klik op de dobbelsteen om te gooien");
+    setSub("Daarna sleep je de pion naar voren, maximaal zoveel stapjes als je gooide.");
+    setDiceDisabled(false);
+    setHint("");
+  } else {
+    setMain("Je gooide " + remaining + (remaining === 1 ? " oog" : " ogen"));
+    setSub("Sleep de pion vooruit. Je mag nog " + remaining + (remaining === 1 ? " stapje" : " stapjes") + ".");
+    setDiceDisabled(true);
+    setHint("Tip: je mag ook eerst 1 of 2 stapjes en daarna weer verder.");
+  }
+  updateValidSpots();
+}
+
+function rollDice() {
+  if (rolling) return;
+  if (delivered >= 3) return;
+  if (remaining > 0) return;
+  if (currentIndex === GAME.endIndex) return;
+
+  rolling = true;
+  dice.classList.add('rolling');
+
+  const start = performance.now();
+  let last = 1;
+
+  const tick = (t) => {
+    const elapsed = t - start;
+    last = 1 + Math.floor(Math.random() * 6);
+    pipLayout(last);
+    if (elapsed < 650) {
+      requestAnimationFrame(tick);
+    } else {
+      dice.classList.remove('rolling');
+      remaining = last;
+      rolling = false;
+      updateUI();
+    }
+  };
+  requestAnimationFrame(tick);
+}
+
+dice.addEventListener('click', () => {
+  if (dice.getAttribute('aria-disabled') === "true") return;
+  rollDice();
+});
+dice.addEventListener('keydown', (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (dice.getAttribute('aria-disabled') === "true") return;
+    rollDice();
+  }
+});
+
+unpackBtn.addEventListener('click', () => {
+  if (currentIndex !== GAME.endIndex) return;
+  if (delivered >= 3) return;
+
+  const slotIndex = delivered;
+  const slotEl = overlay.querySelector(`.home-slot[data-slot="${slotIndex}"]`);
+  if (slotEl) {
+    const img = document.createElement('img');
+    img.alt = "Product " + (slotIndex + 1);
+    img.src = "producten/" + (slotIndex + 1) + ".png";
+    slotEl.appendChild(img);
+    homePlaced[slotIndex] = img;
+  }
+
+  delivered += 1;
+
+  // reset
+  currentIndex = GAME.startIndex;
+  remaining = 0;
+  setPawnToIndex(currentIndex);
+  pipLayout(1);
+
+  updateUI();
+});
+
+// Dragging pawn (pointer events)
+let dragging = false;
+let dragOffset = {x:0, y:0};
+let startPos = {left:0, top:0};
+
+pawn.addEventListener('pointerdown', (e) => {
+  pawn.setPointerCapture(e.pointerId);
+  dragging = true;
+  const rect = pawn.getBoundingClientRect();
+  dragOffset.x = e.clientX - (rect.left + rect.width/2);
+  dragOffset.y = e.clientY - (rect.top + rect.height/2);
+  startPos.left = pawn.style.left;
+  startPos.top = pawn.style.top;
+});
+
+pawn.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const b = boardRect();
+  const x = e.clientX - b.left - dragOffset.x;
+  const y = e.clientY - b.top - dragOffset.y;
+
+  const px = (x / b.width) * 100;
+  const py = (y / b.height) * 100;
+
+  pawn.style.left = px + "%";
+  pawn.style.top = py + "%";
+});
+
+function snapBack() {
+  pawn.style.left = startPos.left;
+  pawn.style.top = startPos.top;
+}
+
+pawn.addEventListener('pointerup', (e) => {
+  if (!dragging) return;
+  dragging = false;
+
+  const target = nearestSpotIndex(e.clientX, e.clientY);
+  if (target == null) {
+    snapBack();
+    return;
+  }
+
+  if (!canMoveTo(target)) {
+    snapBack();
+    setHint("Dat is te ver. Je mag maximaal " + remaining + (remaining === 1 ? " stapje" : " stapjes") + " vooruit.");
+    return;
+  }
+
+  const diff = target - currentIndex;
+  currentIndex = target;
+  remaining -= diff;
+
+  setPawnToIndex(currentIndex);
+  updateUI();
+});
+
+pawn.addEventListener('pointercancel', () => {
+  dragging = false;
+  snapBack();
+});
+
+// init
+renderSpots();
+setPawnToIndex(currentIndex);
+pipLayout(1);
+updateUI();
+</script>
+</body>
+</html>
