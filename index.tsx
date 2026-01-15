@@ -8,65 +8,36 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 
-// --- TYPES ---
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  imageUrl: string;
-  timestamp: number;
-  isFromBarcode?: boolean;
-}
-
-interface CatalogProduct {
-  barcode: string;
-  name: string;
-  price: number;
-}
-
-enum AppState {
-  HOME = 'HOME',
-  CHECKOUT = 'CHECKOUT',
-  SETTINGS = 'SETTINGS',
-  BARCODES = 'BARCODES'
-}
-
-// --- AI SERVICE ---
-async function identifyProduct(
-  base64Image: string, 
-  catalog: CatalogProduct[]
-): Promise<{ name: string; price: number; isFromBarcode: boolean }> {
+// --- AI SCANNER LOGICA (Direct in dit bestand) ---
+async function identifyProduct(base64Image, catalog) {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
+  const catalogList = catalog.map(p => `- Code ${p.barcode}: ${p.name} (€${p.price})`).join("\n");
+  
   try {
-    const catalogInfo = catalog.map(p => `- Code ${p.barcode}: ${p.name} (€${p.price})`).join("\n");
-    
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-          { text: `Je bent de computer van een supermarkt kassa voor kleuters. PRIJSLIJST: ${catalogInfo}. INSTRUCTIE: Match de foto aan een product uit de lijst. Antwoord uitsluitend in JSON: {"name": "Naam", "price": 1, "isFromBarcode": false}` }
+          { text: `Je bent de kassa van een kleuterklas. Match de foto aan de prijslijst:
+          ${catalogList}
+          Antwoord uitsluitend in JSON: {"name": "Naam", "price": 1, "found": true}` }
         ],
       },
       config: { responseMimeType: "application/json" }
     });
-
-    const result = JSON.parse(response.text || '{"name": "Product", "price": 1}');
-    return {
-      name: result.name || "Product",
-      price: result.price || 1,
-      isFromBarcode: !!result.isFromBarcode
-    };
-  } catch (error) {
-    return { name: "Iets lekkers", price: 1, isFromBarcode: false };
+    return JSON.parse(response.text || '{"name": "Product", "price": 1}');
+  } catch (e) {
+    return { name: "Iets lekkers", price: 1, found: false };
   }
 }
 
-// --- COMPONENTEN ---
-const BarcodeImage = ({ value, name }: { value: string; name: string }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
+// --- BARCODE COMPONENT ---
+const BarcodeImage = ({ value, name }) => {
+  const svgRef = useRef(null);
   useEffect(() => {
+    // Gebruik window['JsBarcode'] om TypeScript errors te voorkomen
+    // Fix: Access JsBarcode via (window as any) to resolve TypeScript error on Window object
     if (svgRef.current && (window as any).JsBarcode) {
       (window as any).JsBarcode(svgRef.current, value, {
         format: "CODE128", width: 2, height: 60, displayValue: true, fontSize: 16
@@ -75,17 +46,18 @@ const BarcodeImage = ({ value, name }: { value: string; name: string }) => {
   }, [value]);
 
   return (
-    <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-sky-100 flex flex-col items-center gap-2">
+    <div className="bg-white p-6 rounded-[2rem] shadow-md border-2 border-sky-100 flex flex-col items-center gap-2">
       <p className="font-bold text-sky-900 text-lg">{name}</p>
       <svg ref={svgRef} className="max-w-full h-auto"></svg>
     </div>
   );
 };
 
+// --- HOOFD APP ---
 const App = () => {
-  const [view, setView] = useState<AppState>(AppState.HOME);
-  const [cart, setCart] = useState<Product[]>([]);
-  const [catalog, setCatalog] = useState<CatalogProduct[]>(() => {
+  const [view, setView] = useState('HOME'); 
+  const [cart, setCart] = useState([]);
+  const [catalog, setCatalog] = useState(() => {
     const saved = localStorage.getItem('supermarket_catalog');
     return saved ? JSON.parse(saved) : [
       { barcode: '1001', name: 'Appel', price: 1 },
@@ -95,14 +67,14 @@ const App = () => {
   });
   
   const [isScanning, setIsScanning] = useState(false);
-  const [lastScanned, setLastScanned] = useState<Product | null>(null);
+  const [lastScanned, setLastScanned] = useState(null);
   const [newProductName, setNewProductName] = useState('');
-  const [newProductPrice, setNewProductPrice] = useState<number>(1);
-  const [cameraStatus, setCameraStatus] = useState<'loading' | 'active' | 'error' | 'idle'>('idle');
+  const [newProductPrice, setNewProductPrice] = useState(1);
+  const [cameraStatus, setCameraStatus] = useState('idle');
   
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
 
   const totalPrice = cart.reduce((sum, item) => sum + item.price, 0);
 
@@ -116,63 +88,53 @@ const App = () => {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().then(() => setCameraStatus('active'));
-        };
+        videoRef.current.play();
+        setCameraStatus('active');
       }
     } catch (err) {
       setCameraStatus('error');
     }
   };
 
-  const stopCamera = () => {
-    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
-    streamRef.current = null;
-    setCameraStatus('idle');
-  };
-
   useEffect(() => {
-    if (view === AppState.HOME) startCamera();
-    else stopCamera();
-    return () => stopCamera();
+    if (view === 'HOME') startCamera();
+    return () => {
+        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    };
   }, [view]);
 
   useEffect(() => {
     localStorage.setItem('supermarket_catalog', JSON.stringify(catalog));
   }, [catalog]);
 
-  const captureAndProcess = async () => {
-    if (!videoRef.current || !canvasRef.current || isScanning) return;
+  const capture = async () => {
+    if (!videoRef.current || isScanning) return;
     setIsScanning(true);
 
     const canvas = canvasRef.current;
     const video = videoRef.current;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return setIsScanning(false);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
     
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+    const base64Data = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
 
     try {
-      const finalProduct = await identifyProduct(base64Data, catalog);
-      
-      const newProduct: Product = {
+      const result = await identifyProduct(base64Data, catalog);
+      const newProduct = {
         id: Math.random().toString(36).substr(2, 9),
-        name: finalProduct.name,
-        price: finalProduct.price,
-        imageUrl: canvas.toDataURL('image/jpeg', 0.3),
-        timestamp: Date.now(),
-        isFromBarcode: finalProduct.isFromBarcode
+        name: result.name,
+        price: result.price,
+        imageUrl: canvas.toDataURL('image/jpeg', 0.2)
       };
 
       setCart(prev => [newProduct, ...prev]);
       setLastScanned(newProduct);
       
-      // Geluidje
+      // Bleep geluid
       try {
-        const audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
+        // Fix: Use type assertion to access webkitAudioContext which is non-standard on Window type
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain);
@@ -189,80 +151,58 @@ const App = () => {
     }
   };
 
-  if (view === AppState.SETTINGS) {
-    return (
-      <div className="h-[100dvh] bg-sky-50 flex flex-col overflow-hidden">
-        <header className="bg-white p-4 shadow-sm flex items-center justify-between border-b-4 border-sky-100">
-          <button onClick={() => setView(AppState.HOME)} className="bg-sky-100 p-3 rounded-2xl text-sky-600"><ArrowLeft /></button>
-          <h2 className="text-xl font-bold text-sky-900">Instellingen</h2>
-          <button onClick={() => setView(AppState.BARCODES)} className="bg-sky-500 text-white p-3 rounded-2xl"><BarcodeIcon /></button>
-        </header>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div className="bg-white p-6 rounded-[2rem] shadow-md border-2 border-white">
-            <h3 className="font-bold text-sky-800 mb-4 flex items-center gap-2"><Plus size={20}/> Nieuw Product</h3>
-            <input className="w-full p-4 rounded-xl border-2 border-sky-50 mb-3 text-lg outline-none" placeholder="Naam..." value={newProductName} onChange={e => setNewProductName(e.target.value)} />
-            <div className="flex gap-2">
-              {[1, 2].map(p => (
-                <button key={p} onClick={() => setNewProductPrice(p)} className={`flex-1 py-3 rounded-xl font-bold border-2 ${newProductPrice === p ? 'bg-sky-500 border-sky-500 text-white' : 'bg-white border-sky-50 text-sky-300'}`}>€{p}</button>
-              ))}
-              <button onClick={() => { if(!newProductName) return; setCatalog([...catalog, { barcode: (1000 + catalog.length + 1).toString(), name: newProductName, price: newProductPrice }]); setNewProductName(''); }} className="bg-green-500 text-white px-6 rounded-xl font-bold">OK</button>
-            </div>
+  if (view === 'SETTINGS') return (
+    <div className="h-screen bg-sky-50 flex flex-col p-4 overflow-y-auto">
+      <div className="flex justify-between items-center mb-6">
+        <button onClick={() => setView('HOME')} className="bg-white p-3 rounded-2xl shadow-sm text-sky-600"><ArrowLeft /></button>
+        <h2 className="text-2xl font-bold text-sky-900">Juf/Meester Menu</h2>
+        <div className="w-10"></div>
+      </div>
+      <div className="bg-white p-6 rounded-[2rem] shadow-md mb-6 border-2 border-white">
+        <h3 className="font-bold text-sky-800 mb-4 flex items-center gap-2"><Plus size={20}/> Product Toevoegen</h3>
+        <input className="w-full p-4 rounded-xl border-2 border-sky-50 mb-3 text-lg outline-none" placeholder="Naam..." value={newProductName} onChange={e => setNewProductName(e.target.value)} />
+        <div className="flex gap-2">
+          {[1, 2].map(p => (
+            <button key={p} onClick={() => setNewProductPrice(p)} className={`flex-1 py-3 rounded-xl font-bold border-2 ${newProductPrice === p ? 'bg-sky-500 border-sky-500 text-white' : 'bg-white border-sky-50 text-sky-300'}`}>€{p}</button>
+          ))}
+          <button onClick={() => { if(!newProductName) return; setCatalog([...catalog, { barcode: (1000 + catalog.length + 1).toString(), name: newProductName, price: newProductPrice }]); setNewProductName(''); }} className="bg-green-500 text-white px-6 rounded-xl font-bold">OK</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4 mb-20">
+        {catalog.map(item => (
+          <div key={item.barcode} className="relative">
+            <BarcodeImage value={item.barcode} name={item.name} />
+            <button onClick={() => setCatalog(catalog.filter(c => c.barcode !== item.barcode))} className="absolute top-4 right-4 text-red-200"><Trash2 size={24}/></button>
           </div>
-          <div className="space-y-2 pb-10">
-            {catalog.map(item => (
-              <div key={item.barcode} className="bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm">
-                <div><p className="font-bold text-sky-900">{item.name}</p></div>
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-green-500">€{item.price}</span>
-                  <button onClick={() => setCatalog(catalog.filter(c => c.barcode !== item.barcode))} className="text-red-200"><Trash2 size={20}/></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        ))}
+        <button onClick={() => window.print()} className="w-full bg-sky-900 text-white py-6 rounded-3xl font-bold text-xl flex items-center justify-center gap-3 no-print shadow-xl"><Printer /> Print Barcodes</button>
       </div>
-    );
-  }
+    </div>
+  );
 
-  if (view === AppState.BARCODES) {
-    return (
-      <div className="min-h-screen bg-sky-50 p-4 flex flex-col items-center">
-        <div className="w-full flex justify-between mb-4 max-w-md no-print">
-          <button onClick={() => setView(AppState.SETTINGS)} className="bg-white p-3 rounded-xl shadow-sm text-sky-600"><ArrowLeft /></button>
-          <button onClick={() => window.print()} className="bg-sky-500 text-white px-6 rounded-xl font-bold">Printen</button>
-        </div>
-        <div className="grid grid-cols-1 gap-4 w-full max-w-md">
-          {catalog.map(item => <BarcodeImage key={item.barcode} value={item.barcode} name={item.name} />)}
-        </div>
+  if (view === 'CHECKOUT') return (
+    <div className="h-screen bg-green-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-[3rem] p-10 shadow-2xl text-center w-full max-w-sm bounce-in border-8 border-green-100">
+        <CheckCircle size={80} className="text-green-500 mx-auto mb-4 animate-bounce" />
+        <h1 className="text-3xl font-bold text-green-800">Bedankt!</h1>
+        <p className="text-8xl font-black text-green-500 my-6 tracking-tighter">€{totalPrice}</p>
+        <button onClick={() => { setCart([]); setView('HOME'); }} className="w-full bg-green-500 text-white py-6 rounded-3xl font-bold text-2xl shadow-xl flex items-center justify-center gap-3 active:scale-95">
+          <RefreshCw /> Volgende!
+        </button>
       </div>
-    );
-  }
-
-  if (view === AppState.CHECKOUT) {
-    return (
-      <div className="h-[100dvh] bg-green-50 flex items-center justify-center p-6">
-        <div className="bg-white rounded-[3rem] p-10 shadow-2xl text-center w-full max-w-sm bounce-in border-8 border-green-100">
-          <CheckCircle size={80} className="text-green-500 mx-auto mb-4 animate-bounce" />
-          <h1 className="text-3xl font-bold text-green-800">Bedankt!</h1>
-          <p className="text-8xl font-black text-green-500 my-6 tracking-tighter">€{totalPrice}</p>
-          <button onClick={() => { setCart([]); setView(AppState.HOME); }} className="w-full bg-green-500 text-white py-6 rounded-3xl font-bold text-2xl shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-transform">
-            <RefreshCw /> Volgende!
-          </button>
-        </div>
-      </div>
-    );
-  }
+    </div>
+  );
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-sky-50 overflow-hidden font-fredoka">
-      <header className="bg-white px-5 py-3 shadow-sm flex items-center justify-between shrink-0 border-b-2 border-sky-50">
+    <div className="h-screen flex flex-col bg-sky-50 overflow-hidden">
+      <header className="bg-white px-5 py-3 shadow-sm flex items-center justify-between border-b-2 border-sky-50">
         <div className="flex items-center gap-2">
           <ShoppingBasket className="text-sky-500" />
           <span className="font-bold text-sky-900 text-xl">De Klas Winkel</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="bg-sky-50 px-4 py-1 rounded-xl border-2 border-sky-100 font-bold text-sky-600 text-2xl tracking-tighter">€{totalPrice}</div>
-          <button onClick={() => setView(AppState.SETTINGS)} className="text-sky-200 p-1.5"><Settings size={28} /></button>
+          <button onClick={() => setView('SETTINGS')} className="text-sky-200 p-2"><Settings size={28} /></button>
         </div>
       </header>
 
@@ -273,13 +213,13 @@ const App = () => {
           <div className="scan-line"></div>
 
           {cameraStatus !== 'active' && (
-            <div className="absolute inset-0 bg-sky-900/60 backdrop-blur-md flex flex-col items-center justify-center p-4 text-white z-10">
+            <div className="absolute inset-0 bg-sky-900/60 backdrop-blur-md flex items-center justify-center z-10">
               <button onClick={startCamera} className="bg-white text-sky-900 px-10 py-5 rounded-3xl font-bold text-2xl shadow-2xl active:scale-95">START KASSA 🎥</button>
             </div>
           )}
 
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
-            <button onClick={captureAndProcess} disabled={isScanning || cameraStatus !== 'active'} className={`w-24 h-24 rounded-full border-[6px] border-white shadow-2xl flex items-center justify-center transition-all ${isScanning ? 'bg-sky-400' : 'bg-green-500 active:scale-75'}`}>
+            <button onClick={capture} disabled={isScanning || cameraStatus !== 'active'} className={`w-24 h-24 rounded-full border-[6px] border-white shadow-2xl flex items-center justify-center transition-all ${isScanning ? 'bg-sky-400' : 'bg-green-500 active:scale-75'}`}>
               {isScanning ? <Loader2 className="text-white animate-spin" size={32} /> : <Camera className="text-white" size={40} />}
             </button>
           </div>
@@ -307,16 +247,16 @@ const App = () => {
             ) : (
               cart.map(item => (
                 <div key={item.id} className="flex items-center gap-3 p-3 bg-sky-50/50 rounded-3xl border border-sky-50 bounce-in">
-                  <img src={item.imageUrl} className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-sm" />
+                  <img src={item.imageUrl} className="w-16 h-16 rounded-2xl object-cover border-2 border-white" />
                   <div className="flex-1 truncate font-bold text-sky-900 text-xl">{item.name}</div>
-                  <div className="font-black text-sky-500 text-3xl pr-2 tracking-tighter">€{item.price}</div>
+                  <div className="font-black text-sky-500 text-3xl tracking-tighter">€{item.price}</div>
                   <button onClick={() => setCart(cart.filter(i => i.id !== item.id))} className="text-red-200"><X size={20}/></button>
                 </div>
               ))
             )}
           </div>
           <div className="p-4 bg-sky-50 border-t-2 border-sky-100 shrink-0">
-            <button onClick={() => setView(AppState.CHECKOUT)} disabled={cart.length === 0} className={`w-full py-6 rounded-3xl font-bold text-4xl shadow-lg flex items-center justify-center gap-3 transition-all active:scale-95 ${cart.length === 0 ? 'bg-gray-200 text-gray-400' : 'bg-sky-500 text-white'}`}>
+            <button onClick={() => setView('CHECKOUT')} disabled={cart.length === 0} className={`w-full py-6 rounded-3xl font-bold text-4xl shadow-lg flex items-center justify-center gap-3 transition-all active:scale-95 ${cart.length === 0 ? 'bg-gray-200 text-gray-400' : 'bg-sky-500 text-white'}`}>
               KLAAR! 🏁
             </button>
           </div>
@@ -326,7 +266,6 @@ const App = () => {
   );
 };
 
-// Start de app op de juiste manier voor React 18+
 const rootElement = document.getElementById('root');
 if (rootElement) {
   createRoot(rootElement).render(<App />);
