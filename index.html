@@ -4,21 +4,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Supermarkt Kassa</title>
-    <!-- We laden alles via betrouwbare links (CDN) -->
+    <title>Supermarkt Maatje</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Fredoka', sans-serif; background-color: #F0F9FF; margin: 0; padding: 0; }
-        .scan-line {
-            position: absolute; top: 50%; left: 0; right: 0; height: 4px;
-            background: rgba(239, 68, 68, 0.7); box-shadow: 0 0 15px 2px red;
-            animation: move 2s infinite ease-in-out; z-index: 10;
+        body {
+            font-family: 'Fredoka', sans-serif;
+            background-color: #F8FAFC;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
         }
-        @keyframes move { 0% { top: 20%; } 50% { top: 80%; } 100% { top: 20%; } }
-        @media print { .no-print { display: none !important; } }
+        .scan-line {
+            position: absolute;
+            top: 50%;
+            left: 10%;
+            right: 10%;
+            height: 4px;
+            background: rgba(239, 68, 68, 0.6);
+            box-shadow: 0 0 15px 2px red;
+            border-radius: 10px;
+            animation: scanMove 3s infinite ease-in-out;
+            pointer-events: none;
+            z-index: 5;
+        }
+        @keyframes scanMove {
+            0% { transform: translateY(-80px); opacity: 0.2; }
+            50% { transform: translateY(80px); opacity: 1; }
+            100% { transform: translateY(-80px); opacity: 0.2; }
+        }
+        .flash {
+            animation: flashAnim 0.3s ease-out;
+        }
+        @keyframes flashAnim {
+            0% { background: white; opacity: 0; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0; }
+        }
+        @media print {
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+        }
     </style>
     <script type="importmap">
 {
@@ -32,13 +59,9 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body>
     <div id="root"></div>
-    <!-- We voegen 'typescript' toe aan de presets zodat hij de .tsx extensie pakt, 
-         maar we gebruiken GEEN typescript code binnenin -->
-    <script type="text/babel" data-presets="react,typescript" src="index.tsx"></script>
-<script type="module" src="/index.tsx"></script>
+    <script type="text/babel" data-presets="react" src="index.tsx"></script>
 </body>
 </html>
