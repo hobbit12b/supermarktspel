@@ -10,6 +10,7 @@ import { GoogleGenAI } from "@google/genai";
 
 // --- AI HERKENNING ---
 async function identifyProduct(base64Image, catalog) {
+  // Use new GoogleGenAI inside the function to ensure the correct API key is used.
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const catalogList = catalog.map(p => `- Code ${p.barcode}: ${p.name} (€${p.price})`).join("\n");
   
@@ -19,23 +20,23 @@ async function identifyProduct(base64Image, catalog) {
       contents: {
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-          { text: `Je bent een kassa voor kleuters. Welk product uit de lijst zie je? Zoek een match:\n${catalogList}\nAntwoord alleen met JSON: {"name": "Productnaam", "price": 1}` }
+          { text: `Je bent de kassa van een kleuterschool. Match de foto aan dit lijstje:\n${catalogList}\nGeef antwoord als JSON: {"name": "Naam", "price": 1}` }
         ],
       },
       config: { responseMimeType: "application/json" }
     });
+    // Access response.text as a property, not a method, according to Gemini API guidelines.
     return JSON.parse(response.text || '{"name": "Iets lekkers", "price": 1}');
   } catch (e) {
     return { name: "Iets lekkers", price: 1 };
   }
 }
 
-// --- BARCODE MAKER ---
-// Fix: Added React.FC type to the component to correctly handle the 'key' prop and other intrinsic React props in TSX.
-const BarcodeImage: React.FC<{ value: any; name: any }> = ({ value, name }) => {
+// --- BARCODE COMPONENT ---
+const BarcodeImage = ({ value, name }) => {
   const svgRef = useRef(null);
   useEffect(() => {
-    // Fix: Cast window to any to access JsBarcode which is not part of the standard global window type.
+    // Cast window to any to access JsBarcode which is typically added via a global script.
     if (svgRef.current && (window as any).JsBarcode) {
       (window as any).JsBarcode(svgRef.current, value, {
         format: "CODE128", width: 2, height: 60, displayValue: true, fontSize: 16
@@ -56,7 +57,7 @@ const App = () => {
   const [view, setView] = useState('HOME'); 
   const [cart, setCart] = useState([]);
   const [catalog, setCatalog] = useState(() => {
-    const saved = localStorage.getItem('super_catalog_v2');
+    const saved = localStorage.getItem('super_catalog_v3');
     return saved ? JSON.parse(saved) : [
       { barcode: '1001', name: 'Appel', price: 1 },
       { barcode: '1002', name: 'Banaan', price: 1 },
@@ -100,7 +101,7 @@ const App = () => {
   }, [view]);
 
   useEffect(() => {
-    localStorage.setItem('super_catalog_v2', JSON.stringify(catalog));
+    localStorage.setItem('super_catalog_v3', JSON.stringify(catalog));
   }, [catalog]);
 
   const capture = async () => {
@@ -129,8 +130,8 @@ const App = () => {
       
       // Bleep geluid
       try {
-        // Fix: Cast window to any to access webkitAudioContext which is required for legacy browser support and missing in standard TS types.
-        const audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
+        // Cast window to any for webkitAudioContext support in TypeScript.
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain);
