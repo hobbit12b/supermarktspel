@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-// Fix: Import createRoot from 'react-dom/client' for React 18+
 import { createRoot } from 'react-dom/client';
 import { 
   ShoppingBasket, Camera, Trash2, CheckCircle, 
@@ -9,57 +8,84 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 
-// --- AI SCANNER LOGICA ---
-async function scanMetAI(base64Image: string, catalog: any[]) {
+// --- TYPES ---
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  imageUrl: string;
+  timestamp: number;
+  isFromBarcode?: boolean;
+}
+
+interface CatalogProduct {
+  barcode: string;
+  name: string;
+  price: number;
+}
+
+enum AppState {
+  HOME = 'HOME',
+  CHECKOUT = 'CHECKOUT',
+  SETTINGS = 'SETTINGS',
+  BARCODES = 'BARCODES'
+}
+
+// --- AI SERVICE ---
+async function identifyProduct(
+  base64Image: string, 
+  catalog: CatalogProduct[]
+): Promise<{ name: string; price: number; isFromBarcode: boolean }> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const catalogList = catalog.map(p => `- Code ${p.barcode}: ${p.name} (€${p.price})`).join("\n");
-  
+
   try {
+    const catalogInfo = catalog.map(p => `- Code ${p.barcode}: ${p.name} (€${p.price})`).join("\n");
+    
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-          { text: `Je bent de kassa-computer van een basisschool winkel.
-          Kijk naar de foto. Welk product uit onze lijst zie je? 
-          Lijst:
-          ${catalogList}
-          
-          Antwoord uitsluitend in JSON: {"name": "Productnaam", "price": 1, "found": true}` }
+          { text: `Je bent de computer van een supermarkt kassa voor kleuters. PRIJSLIJST: ${catalogInfo}. INSTRUCTIE: Match de foto aan een product uit de lijst. Antwoord uitsluitend in JSON: {"name": "Naam", "price": 1, "isFromBarcode": false}` }
         ],
       },
       config: { responseMimeType: "application/json" }
     });
-    const result = JSON.parse(response.text || '{"name": "Iets lekkers", "price": 1, "found": false}');
-    return result;
-  } catch (e) {
-    return { name: "Onbekend product", price: 1, found: false };
+
+    const result = JSON.parse(response.text || '{"name": "Product", "price": 1}');
+    return {
+      name: result.name || "Product",
+      price: result.price || 1,
+      isFromBarcode: !!result.isFromBarcode
+    };
+  } catch (error) {
+    return { name: "Iets lekkers", price: 1, isFromBarcode: false };
   }
 }
 
-// --- BARCODE TEKENAAR ---
-const BarcodeItem = ({ value, name }: { value: string, name: string }) => {
-  const svgRef = useRef(null);
+// --- COMPONENTEN ---
+const BarcodeImage = ({ value, name }: { value: string; name: string }) => {
+  const svgRef = useRef<SVGSVGElement>(null);
   useEffect(() => {
     if (svgRef.current && (window as any).JsBarcode) {
       (window as any).JsBarcode(svgRef.current, value, {
-        format: "CODE128", width: 2, height: 60, displayValue: true, fontSize: 18
+        format: "CODE128", width: 2, height: 60, displayValue: true, fontSize: 16
       });
     }
   }, [value]);
+
   return (
-    <div className="bg-white p-6 rounded-[2rem] shadow-sm border-2 border-sky-100 flex flex-col items-center gap-2">
-      <p className="font-bold text-sky-900 text-xl">{name}</p>
+    <div className="bg-white p-6 rounded-3xl shadow-md border-2 border-sky-100 flex flex-col items-center gap-2">
+      <p className="font-bold text-sky-900 text-lg">{name}</p>
       <svg ref={svgRef} className="max-w-full h-auto"></svg>
     </div>
   );
 };
 
-// --- HOOFD APP ---
 const App = () => {
-  const [view, setView] = useState('HOME'); 
-  const [cart, setCart] = useState([]);
-  const [catalog, setCatalog] = useState(() => {
+  const [view, setView] = useState<AppState>(AppState.HOME);
+  const [cart, setCart] = useState<Product[]>([]);
+  const [catalog, setCatalog] = useState<CatalogProduct[]>(() => {
     const saved = localStorage.getItem('supermarket_catalog');
     return saved ? JSON.parse(saved) : [
       { barcode: '1001', name: 'Appel', price: 1 },
@@ -69,179 +95,230 @@ const App = () => {
   });
   
   const [isScanning, setIsScanning] = useState(false);
-  const [lastScanned, setLastScanned] = useState(null);
+  const [lastScanned, setLastScanned] = useState<Product | null>(null);
   const [newProductName, setNewProductName] = useState('');
-  const [newProductPrice, setNewProductPrice] = useState(1);
-  const [cameraActive, setCameraActive] = useState(false);
+  const [newProductPrice, setNewProductPrice] = useState<number>(1);
+  const [cameraStatus, setCameraStatus] = useState<'loading' | 'active' | 'error' | 'idle'>('idle');
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
+  const totalPrice = cart.reduce((sum, item) => sum + item.price, 0);
+
+  const startCamera = async () => {
+    setCameraStatus('loading');
+    try {
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 } }
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().then(() => setCameraStatus('active'));
+        };
+      }
+    } catch (err) {
+      setCameraStatus('error');
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    setCameraStatus('idle');
+  };
+
+  useEffect(() => {
+    if (view === AppState.HOME) startCamera();
+    else stopCamera();
+    return () => stopCamera();
+  }, [view]);
 
   useEffect(() => {
     localStorage.setItem('supermarket_catalog', JSON.stringify(catalog));
   }, [catalog]);
 
-  const startCamera = async () => {
+  const captureAndProcess = async () => {
+    if (!videoRef.current || !canvasRef.current || isScanning) return;
+    setIsScanning(true);
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return setIsScanning(false);
+    
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment', width: { ideal: 1280 } } 
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setCameraActive(true);
-      }
-    } catch (err) { 
-      alert("Oeps! Ik kan de camera niet vinden. Geef je toestemming?"); 
+      const finalProduct = await identifyProduct(base64Data, catalog);
+      
+      const newProduct: Product = {
+        id: Math.random().toString(36).substr(2, 9),
+        name: finalProduct.name,
+        price: finalProduct.price,
+        imageUrl: canvas.toDataURL('image/jpeg', 0.3),
+        timestamp: Date.now(),
+        isFromBarcode: finalProduct.isFromBarcode
+      };
+
+      setCart(prev => [newProduct, ...prev]);
+      setLastScanned(newProduct);
+      
+      // Geluidje
+      try {
+        const audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = 880;
+        gain.gain.value = 0.1;
+        osc.start();
+        setTimeout(() => osc.stop(), 100);
+      } catch(e) {}
+
+      setTimeout(() => { setLastScanned(null); setIsScanning(false); }, 2000);
+    } catch (err) {
+      setIsScanning(false);
     }
   };
 
-  const capture = async () => {
-    if (!videoRef.current || isScanning) return;
-    setIsScanning(true);
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-    
-    const base64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
-    
-    const result = await scanMetAI(base64, catalog);
-    
-    const product = {
-      id: Math.random().toString(36).substr(2, 9),
-      ...result,
-      imageUrl: canvas.toDataURL('image/jpeg', 0.2)
-    };
-    
-    setCart(prev => [product, ...prev]);
-    setLastScanned(product);
-    
-    try {
-      const audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.frequency.value = 880;
-      gain.gain.value = 0.1;
-      osc.start();
-      setTimeout(() => osc.stop(), 100);
-    } catch(e) {}
-
-    setTimeout(() => { 
-      setLastScanned(null); 
-      setIsScanning(false); 
-    }, 2500);
-  };
-
-  if (view === 'SETTINGS') return (
-    <div className="h-screen bg-sky-50 flex flex-col p-4 overflow-y-auto">
-      <div className="flex justify-between items-center mb-6">
-        <button onClick={() => setView('HOME')} className="bg-white p-3 rounded-2xl shadow-sm text-sky-600 active:scale-90"><ArrowLeft /></button>
-        <h2 className="text-2xl font-bold text-sky-900">Juf/Meester Menu</h2>
-        <div className="w-10"></div>
-      </div>
-      
-      <div className="bg-white p-6 rounded-[2.5rem] shadow-md mb-6 border-2 border-white">
-        <h3 className="font-bold text-sky-800 mb-4 flex items-center gap-2"><Plus size={20}/> Product Toevoegen</h3>
-        <input className="w-full p-4 rounded-2xl bg-sky-50 border-2 border-sky-100 mb-3 text-xl outline-none" placeholder="Naam van het eten..." value={newProductName} onChange={e => setNewProductName(e.target.value)} />
-        <div className="flex gap-2">
-          {[1, 2].map(p => (
-            <button key={p} onClick={() => setNewProductPrice(p)} className={`flex-1 py-4 rounded-2xl font-bold text-2xl border-2 transition-all ${newProductPrice === p ? 'bg-sky-500 border-sky-500 text-white shadow-lg' : 'bg-white border-sky-50 text-sky-300'}`}>€{p}</button>
-          ))}
-          <button onClick={() => { if(newProductName) setCatalog([...catalog, { barcode: (1000 + catalog.length + 1).toString(), name: newProductName, price: newProductPrice }]); setNewProductName(''); }} className="bg-green-500 text-white px-8 rounded-2xl font-bold text-xl shadow-lg active:scale-95">OK</button>
+  if (view === AppState.SETTINGS) {
+    return (
+      <div className="h-[100dvh] bg-sky-50 flex flex-col overflow-hidden">
+        <header className="bg-white p-4 shadow-sm flex items-center justify-between border-b-4 border-sky-100">
+          <button onClick={() => setView(AppState.HOME)} className="bg-sky-100 p-3 rounded-2xl text-sky-600"><ArrowLeft /></button>
+          <h2 className="text-xl font-bold text-sky-900">Instellingen</h2>
+          <button onClick={() => setView(AppState.BARCODES)} className="bg-sky-500 text-white p-3 rounded-2xl"><BarcodeIcon /></button>
+        </header>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="bg-white p-6 rounded-[2rem] shadow-md border-2 border-white">
+            <h3 className="font-bold text-sky-800 mb-4 flex items-center gap-2"><Plus size={20}/> Nieuw Product</h3>
+            <input className="w-full p-4 rounded-xl border-2 border-sky-50 mb-3 text-lg outline-none" placeholder="Naam..." value={newProductName} onChange={e => setNewProductName(e.target.value)} />
+            <div className="flex gap-2">
+              {[1, 2].map(p => (
+                <button key={p} onClick={() => setNewProductPrice(p)} className={`flex-1 py-3 rounded-xl font-bold border-2 ${newProductPrice === p ? 'bg-sky-500 border-sky-500 text-white' : 'bg-white border-sky-50 text-sky-300'}`}>€{p}</button>
+              ))}
+              <button onClick={() => { if(!newProductName) return; setCatalog([...catalog, { barcode: (1000 + catalog.length + 1).toString(), name: newProductName, price: newProductPrice }]); setNewProductName(''); }} className="bg-green-500 text-white px-6 rounded-xl font-bold">OK</button>
+            </div>
+          </div>
+          <div className="space-y-2 pb-10">
+            {catalog.map(item => (
+              <div key={item.barcode} className="bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm">
+                <div><p className="font-bold text-sky-900">{item.name}</p></div>
+                <div className="flex items-center gap-3">
+                  <span className="font-bold text-green-500">€{item.price}</span>
+                  <button onClick={() => setCatalog(catalog.filter(c => c.barcode !== item.barcode))} className="text-red-200"><Trash2 size={20}/></button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
+    );
+  }
 
-      <div className="grid grid-cols-1 gap-4 mb-10">
-        <h3 className="font-bold text-sky-900 px-2 flex items-center gap-2">Huidige Producten:</h3>
-        {catalog.map((c) => (
-          <div key={c.barcode} className="relative group">
-            <BarcodeItem value={c.barcode} name={c.name} />
-            <button onClick={() => setCatalog(catalog.filter((i) => i.barcode !== c.barcode))} className="absolute top-4 right-4 text-red-200 p-2 hover:text-red-500"><Trash2 size={24}/></button>
-          </div>
-        ))}
-        <button onClick={() => window.print()} className="w-full bg-sky-900 text-white py-6 rounded-[2.5rem] font-bold text-xl flex items-center justify-center gap-3 no-print shadow-xl active:scale-95"><Printer /> Barcodes Printen</button>
+  if (view === AppState.BARCODES) {
+    return (
+      <div className="min-h-screen bg-sky-50 p-4 flex flex-col items-center">
+        <div className="w-full flex justify-between mb-4 max-w-md no-print">
+          <button onClick={() => setView(AppState.SETTINGS)} className="bg-white p-3 rounded-xl shadow-sm text-sky-600"><ArrowLeft /></button>
+          <button onClick={() => window.print()} className="bg-sky-500 text-white px-6 rounded-xl font-bold">Printen</button>
+        </div>
+        <div className="grid grid-cols-1 gap-4 w-full max-w-md">
+          {catalog.map(item => <BarcodeImage key={item.barcode} value={item.barcode} name={item.name} />)}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (view === AppState.CHECKOUT) {
+    return (
+      <div className="h-[100dvh] bg-green-50 flex items-center justify-center p-6">
+        <div className="bg-white rounded-[3rem] p-10 shadow-2xl text-center w-full max-w-sm bounce-in border-8 border-green-100">
+          <CheckCircle size={80} className="text-green-500 mx-auto mb-4 animate-bounce" />
+          <h1 className="text-3xl font-bold text-green-800">Bedankt!</h1>
+          <p className="text-8xl font-black text-green-500 my-6 tracking-tighter">€{totalPrice}</p>
+          <button onClick={() => { setCart([]); setView(AppState.HOME); }} className="w-full bg-green-500 text-white py-6 rounded-3xl font-bold text-2xl shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-transform">
+            <RefreshCw /> Volgende!
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-sky-50 overflow-hidden font-fredoka">
-      <header className="bg-white px-6 py-4 flex items-center justify-between border-b-4 border-sky-100 shrink-0">
-        <div className="flex items-center gap-2 text-sky-900 font-bold text-2xl"><ShoppingBasket className="text-sky-500"/> De Klas Winkel</div>
-        <div className="flex items-center gap-3">
-          <div className="bg-sky-100 px-6 py-2 rounded-2xl font-black text-sky-600 text-4xl shadow-inner tracking-tighter">€{cart.reduce((s, i) => s + (i.price || 0), 0)}</div>
-          <button onClick={() => setView('SETTINGS')} className="text-sky-200 p-2 hover:text-sky-400 transition-colors"><Settings size={32} /></button>
+    <div className="h-[100dvh] flex flex-col bg-sky-50 overflow-hidden font-fredoka">
+      <header className="bg-white px-5 py-3 shadow-sm flex items-center justify-between shrink-0 border-b-2 border-sky-50">
+        <div className="flex items-center gap-2">
+          <ShoppingBasket className="text-sky-500" />
+          <span className="font-bold text-sky-900 text-xl">De Klas Winkel</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="bg-sky-50 px-4 py-1 rounded-xl border-2 border-sky-100 font-bold text-sky-600 text-2xl tracking-tighter">€{totalPrice}</div>
+          <button onClick={() => setView(AppState.SETTINGS)} className="text-sky-200 p-1.5"><Settings size={28} /></button>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col p-3 gap-3 overflow-hidden">
-        <div className="h-[45%] bg-black rounded-[3rem] relative overflow-hidden shadow-2xl border-4 border-white shrink-0">
+      <main className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
+        <div className="h-[45%] bg-black rounded-[2.5rem] relative overflow-hidden shadow-lg border-4 border-white shrink-0">
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           <canvas ref={canvasRef} className="hidden" />
           <div className="scan-line"></div>
-          
-          {!cameraActive && (
-            <div className="absolute inset-0 bg-sky-900/60 backdrop-blur-md flex items-center justify-center">
-              <button onClick={startCamera} className="bg-white text-sky-900 px-12 py-6 rounded-[2.5rem] font-bold text-2xl shadow-2xl active:scale-95 transition-transform">KASSA STARTEN 🎥</button>
+
+          {cameraStatus !== 'active' && (
+            <div className="absolute inset-0 bg-sky-900/60 backdrop-blur-md flex flex-col items-center justify-center p-4 text-white z-10">
+              <button onClick={startCamera} className="bg-white text-sky-900 px-10 py-5 rounded-3xl font-bold text-2xl shadow-2xl active:scale-95">START KASSA 🎥</button>
             </div>
           )}
-          
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
-            <button onClick={capture} disabled={isScanning || !cameraActive} className={`w-28 h-28 rounded-full border-[6px] border-white shadow-2xl flex items-center justify-center transition-all ${isScanning ? 'bg-sky-400 animate-pulse' : 'bg-green-500 active:scale-75'}`}>
-              {isScanning ? <Loader2 className="text-white animate-spin" size={40} /> : <Camera className="text-white" size={44} />}
+
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
+            <button onClick={captureAndProcess} disabled={isScanning || cameraStatus !== 'active'} className={`w-24 h-24 rounded-full border-[6px] border-white shadow-2xl flex items-center justify-center transition-all ${isScanning ? 'bg-sky-400' : 'bg-green-500 active:scale-75'}`}>
+              {isScanning ? <Loader2 className="text-white animate-spin" size={32} /> : <Camera className="text-white" size={40} />}
             </button>
           </div>
 
           {lastScanned && (
-            <div className="absolute inset-0 bg-sky-900/80 backdrop-blur-md flex items-center justify-center p-6 z-50">
-              <div className="bg-white p-10 rounded-[4rem] text-center bounce-in shadow-2xl border-4 border-sky-100">
-                <img src={lastScanned.imageUrl} className="w-36 h-36 rounded-[2.5rem] mx-auto mb-4 object-cover border-4 border-sky-50 shadow-inner" />
-                <p className="font-bold text-3xl text-sky-900">{lastScanned.name}</p>
-                <p className="text-7xl font-black text-sky-500 tracking-tighter">€{lastScanned.price}</p>
+            <div className="absolute inset-0 bg-sky-900/80 backdrop-blur-md flex items-center justify-center z-30">
+              <div className="bg-white p-8 rounded-[3rem] shadow-2xl flex flex-col items-center gap-4 bounce-in border-4 border-sky-100">
+                <img src={lastScanned.imageUrl} className="w-32 h-32 rounded-3xl object-cover border-4 border-sky-50" />
+                <div className="text-center">
+                  <p className="font-bold text-sky-900 text-2xl">{lastScanned.name}</p>
+                  <p className="text-6xl font-black text-sky-500 mt-2">€{lastScanned.price}</p>
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex-1 bg-white rounded-[3rem] shadow-xl flex flex-col overflow-hidden border-4 border-white">
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="flex-1 bg-white rounded-[2.5rem] shadow-xl flex flex-col overflow-hidden border-2 border-white">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-sky-100 opacity-40 gap-3">
-                <BarcodeIcon size={80} />
-                <p className="font-bold text-2xl text-center px-8">Houd iets voor de camera en druk op de groene knop!</p>
+              <div className="h-full flex flex-col items-center justify-center text-sky-100 gap-3 opacity-30">
+                <BarcodeIcon size={60} />
+                <p className="font-bold text-xl">Nog niets gescand!</p>
               </div>
             ) : (
-              cart.map((item) => (
-                <div key={item.id} className="flex items-center gap-4 p-4 bg-sky-50/50 rounded-[2rem] border-2 border-sky-50 bounce-in">
-                  <img src={item.imageUrl} className="w-20 h-20 rounded-2xl object-cover border-2 border-white" />
-                  <div className="flex-1 font-bold text-sky-900 text-2xl truncate">{item.name}</div>
-                  <div className="font-black text-sky-500 text-4xl pr-2 tracking-tighter">€{item.price}</div>
-                  <button onClick={() => setCart(cart.filter(i => i.id !== item.id))} className="text-red-200 p-2"><X size={24}/></button>
+              cart.map(item => (
+                <div key={item.id} className="flex items-center gap-3 p-3 bg-sky-50/50 rounded-3xl border border-sky-50 bounce-in">
+                  <img src={item.imageUrl} className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-sm" />
+                  <div className="flex-1 truncate font-bold text-sky-900 text-xl">{item.name}</div>
+                  <div className="font-black text-sky-500 text-3xl pr-2 tracking-tighter">€{item.price}</div>
+                  <button onClick={() => setCart(cart.filter(i => i.id !== item.id))} className="text-red-200"><X size={20}/></button>
                 </div>
               ))
             )}
           </div>
-          
-          <div className="p-5 bg-sky-50 border-t-2 border-sky-100">
-            {view === 'CHECKOUT' ? (
-               <div className="fixed inset-0 bg-green-500 z-[100] flex items-center justify-center p-6 text-center animate-in fade-in zoom-in">
-                  <div className="bg-white rounded-[4rem] p-12 shadow-2xl w-full max-w-md border-8 border-green-100">
-                    <CheckCircle size={100} className="text-green-500 mx-auto mb-6 animate-bounce" />
-                    <h1 className="text-4xl font-bold text-green-900">Dat is alles!</h1>
-                    <p className="text-9xl font-black text-green-500 my-8">€{cart.reduce((s, i) => s + (i.price || 0), 0)}</p>
-                    <button onClick={() => { setCart([]); setView('HOME'); }} className="w-full bg-green-500 text-white py-8 rounded-[3rem] font-bold text-3xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-4">
-                      <RefreshCw size={32} /> VOLGENDE!
-                    </button>
-                  </div>
-               </div>
-            ) : (
-              <button onClick={() => setView('CHECKOUT')} disabled={cart.length === 0} className={`w-full py-8 rounded-[2.5rem] font-bold text-4xl shadow-xl flex items-center justify-center gap-4 transition-all ${cart.length === 0 ? 'bg-gray-200 text-gray-400' : 'bg-sky-500 text-white active:scale-95'}`}>
-                KLAAR! 🏁
-              </button>
-            )}
+          <div className="p-4 bg-sky-50 border-t-2 border-sky-100 shrink-0">
+            <button onClick={() => setView(AppState.CHECKOUT)} disabled={cart.length === 0} className={`w-full py-6 rounded-3xl font-bold text-4xl shadow-lg flex items-center justify-center gap-3 transition-all active:scale-95 ${cart.length === 0 ? 'bg-gray-200 text-gray-400' : 'bg-sky-500 text-white'}`}>
+              KLAAR! 🏁
+            </button>
           </div>
         </div>
       </main>
@@ -249,9 +326,8 @@ const App = () => {
   );
 };
 
-// Start de app
+// Start de app op de juiste manier voor React 18+
 const rootElement = document.getElementById('root');
 if (rootElement) {
-  const root = createRoot(rootElement);
-  root.render(<App />);
+  createRoot(rootElement).render(<App />);
 }
