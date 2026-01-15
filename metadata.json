@@ -1,0 +1,7 @@
+{
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "name": "Supermarkt Maatje",
+  "description": "Interactieve AI-kassa voor de kleuterklas."
+}
