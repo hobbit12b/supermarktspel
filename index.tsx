@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { createRoot } from 'react-dom';
+// Fix: Import createRoot from 'react-dom/client' for React 18+
+import { createRoot } from 'react-dom/client';
 import { 
   ShoppingBasket, Camera, Trash2, CheckCircle, 
   Settings, Plus, Barcode as BarcodeIcon, ArrowLeft, 
@@ -29,19 +30,18 @@ async function scanMetAI(base64Image: string, catalog: any[]) {
       },
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || '{"name": "Iets lekkers", "price": 1, "found": false}');
+    const result = JSON.parse(response.text || '{"name": "Iets lekkers", "price": 1, "found": false}');
+    return result;
   } catch (e) {
     return { name: "Onbekend product", price: 1, found: false };
   }
 }
 
 // --- BARCODE TEKENAAR ---
-const BarcodeItem = ({ value, name }) => {
+const BarcodeItem = ({ value, name }: { value: string, name: string }) => {
   const svgRef = useRef(null);
   useEffect(() => {
-    // Fix: Access window.JsBarcode using 'any' cast to bypass TypeScript property check
     if (svgRef.current && (window as any).JsBarcode) {
-      // Fix: Call JsBarcode using 'any' cast
       (window as any).JsBarcode(svgRef.current, value, {
         format: "CODE128", width: 2, height: 60, displayValue: true, fontSize: 18
       });
@@ -91,7 +91,7 @@ const App = () => {
         setCameraActive(true);
       }
     } catch (err) { 
-      alert("Oeps! Ik kan de camera niet vinden."); 
+      alert("Oeps! Ik kan de camera niet vinden. Geef je toestemming?"); 
     }
   };
 
@@ -118,7 +118,6 @@ const App = () => {
     setLastScanned(product);
     
     try {
-      // Fix: Use any cast for window.AudioContext and window.webkitAudioContext to avoid TypeScript errors
       const audioCtx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
@@ -173,7 +172,7 @@ const App = () => {
       <header className="bg-white px-6 py-4 flex items-center justify-between border-b-4 border-sky-100 shrink-0">
         <div className="flex items-center gap-2 text-sky-900 font-bold text-2xl"><ShoppingBasket className="text-sky-500"/> De Klas Winkel</div>
         <div className="flex items-center gap-3">
-          <div className="bg-sky-100 px-6 py-2 rounded-2xl font-black text-sky-600 text-4xl shadow-inner tracking-tighter">€{cart.reduce((s, i) => s + i.price, 0)}</div>
+          <div className="bg-sky-100 px-6 py-2 rounded-2xl font-black text-sky-600 text-4xl shadow-inner tracking-tighter">€{cart.reduce((s, i) => s + (i.price || 0), 0)}</div>
           <button onClick={() => setView('SETTINGS')} className="text-sky-200 p-2 hover:text-sky-400 transition-colors"><Settings size={32} /></button>
         </div>
       </header>
@@ -232,7 +231,7 @@ const App = () => {
                   <div className="bg-white rounded-[4rem] p-12 shadow-2xl w-full max-w-md border-8 border-green-100">
                     <CheckCircle size={100} className="text-green-500 mx-auto mb-6 animate-bounce" />
                     <h1 className="text-4xl font-bold text-green-900">Dat is alles!</h1>
-                    <p className="text-9xl font-black text-green-500 my-8">€{cart.reduce((s, i) => s + i.price, 0)}</p>
+                    <p className="text-9xl font-black text-green-500 my-8">€{cart.reduce((s, i) => s + (i.price || 0), 0)}</p>
                     <button onClick={() => { setCart([]); setView('HOME'); }} className="w-full bg-green-500 text-white py-8 rounded-[3rem] font-bold text-3xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-4">
                       <RefreshCw size={32} /> VOLGENDE!
                     </button>
@@ -250,5 +249,9 @@ const App = () => {
   );
 };
 
-const root = createRoot(document.getElementById('root'));
-root.render(<App />);
+// Start de app
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = createRoot(rootElement);
+  root.render(<App />);
+}
